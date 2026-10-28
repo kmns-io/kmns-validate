@@ -1,0 +1,11 @@
+{
+  "schema_version": "kmns.io/version/v1alpha1",
+  "generated_at": "2026-10-25T00:00:00Z",
+  "applications": {
+    "kmns-validate": {
+      "latest": "0.4.0",
+      "channel": "stable",
+      "message": "A newer kmns-validate release is available. Upgrade to 0.4.0."
+    }
+  }
+}

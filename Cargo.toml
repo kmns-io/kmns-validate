@@ -1,0 +1,45 @@
+[package]
+name = "kmns-validate"
+version = "0.4.0"
+edition = "2021"
+authors = ["KMNS Authors <team@kmns.io>"]
+license = "Apache-2.0"
+description = "Lightning-fast, zero-dependency infrastructure testing and validation tool"
+repository = "https://github.com/kmns-io/kmns-validate"
+documentation = "https://validate.kmns.io"
+
+[[bin]]
+name = "kmns-validate"
+path = "src/main.rs"
+
+[features]
+default = []
+parallel = ["dep:rayon"]
+
+[dependencies]
+# https://github.com/clap-rs/clap/blob/master/CHANGELOG.md
+clap = { version = "~4.5", features = ["derive", "env"] }
+nix = { version = "0.31.2", features = ["user", "net", "hostname", "resource", "process", "signal"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1.0"
+exit-code = "1.0.0"
+os_info = "3"
+# Pure static standalone curl & OpenSSL (zero dynamic host libssl dependencies)
+curl = { version = "0.4", features = ["static-ssl", "static-curl"] }
+minijinja = "2.4.0"
+regex = "1.11.1"
+semver = "1.0.25"
+rayon = { version = "1", optional = true }
+chrono = { version = "0.4", features = ["serde"] }
+shellexpand = "3.1.0"
+dirs = "5.0"
+kmns-contract = "0.2.0"
+thiserror = "1.0"
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3.16"
+
+[lints.rust]
+unsafe_code = "forbid"

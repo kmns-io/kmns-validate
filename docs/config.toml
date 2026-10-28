@@ -1,0 +1,25 @@
+# The URL the site will be built for
+base_url = "https://validate.kmns.io"
+title = "KMNS Validate Documentation"
+description = "Sub-15ms empirical infrastructure verification engine in pure Rust. Fast declarative contracts for humans and autonomous AI agents."
+default_language = "en"
+
+# Compilation options
+compile_sass = false
+build_search_index = true
+
+[markdown]
+highlight_theme = "css"
+highlight_code = true
+render_emoji = true
+
+[extra]
+version = "0.4.0"
+image_tag = "v0.4.0"
+image_repo = "ghcr.io/kmns-io/kmns-validate"
+hub_url = "https://kmns.io"
+schema_url = "https://kmns.io/validate/v1alpha1"
+privacy_url = "https://kmns.io/legal/privacy/"
+terms_url = "https://kmns.io/legal/terms/"
+github_repo = "https://github.com/kmns-io/kmns-validate"
+theme_css_url = "/assets/css/kmns.css"

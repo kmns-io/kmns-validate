@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Crisp luminous frame remains visible on light and black browser chrome. -->
+  <rect width="64" height="64" rx="15" fill="#ffffff"/>
+  <rect width="62" height="62" x="1" y="1" rx="14" fill="none" stroke="#7dd3fc" stroke-width="2"/>
+
+  <!-- 2. Dark Slate Internal Field (Framing the K Emblem) -->
+  <rect x="6" y="6" width="52" height="52" rx="10" fill="#172554"/>
+
+  <!-- 3. High-Contrast Baltic Neighbor K Geometry -->
+  <!-- Left Bastion / Pillar -->
+  <rect x="16" y="13" width="10" height="38" rx="2.5" fill="#38bdf8" stroke="#ffffff" stroke-width="1.5"/>
+
+  <!-- Top Protective Roofline Chevron (Jumtiņš) -->
+  <path d="M28.5 29 L42.5 15 C43.8 13.8 46 13.8 47.2 15.2 L48 16.5 C49 17.8 48.8 19.5 47.2 21 L33.5 34 Z" 
+        fill="#c084fc" stroke="#ffffff" stroke-width="1.5"/>
+
+  <!-- Bottom Sovereign Anchor Wing -->
+  <path d="M28.5 32 L45.5 47 C46.8 48.2 47 50 46 51.5 L45 52.5 C43.8 53.8 42 53.8 40.8 52.5 L27 37 Z" 
+        fill="#22d3ee" stroke="#ffffff" stroke-width="1.5"/>
+</svg>

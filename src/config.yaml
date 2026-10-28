@@ -1,0 +1,13 @@
+# Default kmns-validate config
+---
+log:
+  level: "INFO"
+  format: "text"
+parallel:
+  enabled: false
+  max-threads: 0
+environment:
+  name: ""
+  file: ""
+  variables: []
+validate: []

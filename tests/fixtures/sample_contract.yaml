@@ -1,0 +1,53 @@
+schema_version: kmns.io/validate/v1alpha1
+id: sample-development-contract
+metadata:
+  name: Sample development contract
+  description: Validates multi-resource contract composition (port, process, file, http, dns).
+  version: "0.1.0"
+  language: en
+checks:
+  - id: SAMPLE_HTTP
+    kind: resource
+    metadata:
+      name: HTTP Web listener
+      description: Check if HTTP port 80 is listening
+      severity: high
+    resource:
+      kind: port
+      port: tcp:80
+    expect:
+      listening: true
+  - id: SAMPLE_HTTPS
+    kind: resource
+    metadata:
+      name: HTTPS Web listener
+      description: Check if HTTPS port 443 is listening
+      severity: high
+    resource:
+      kind: port
+      port: tcp:443
+    expect:
+      listening: true
+  - id: SAMPLE_FILE
+    kind: resource
+    metadata:
+      name: Release configuration file
+      description: Check if /etc/hosts exists as a file
+      severity: medium
+    resource:
+      kind: file
+      path: /etc/hosts
+    expect:
+      filetype: file
+      exists: true
+  - id: SAMPLE_PROCESS
+    kind: resource
+    metadata:
+      name: Systemd or init process
+      description: Check if systemd process is running
+      severity: medium
+    resource:
+      kind: process
+      process: systemd
+    expect:
+      running: true

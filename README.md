@@ -37,6 +37,18 @@ cargo build --release -p kmns-validate
 sudo cp target/release/kmns-validate /usr/local/bin/
 ```
 
+### Via Docker / OCI Container
+
+Run validation without installing host binaries:
+
+```bash
+# Docker Hub (shorthand alias)
+docker run --rm -v $(pwd):/contracts:ro kmnsio/validate:latest run /contracts/validate.yaml
+
+# GitHub Packages (GHCR)
+docker run --rm -v $(pwd):/contracts:ro ghcr.io/kmns-io/kmns-validate:latest run /contracts/validate.yaml
+```
+
 Verify installation:
 ```bash
 kmns-validate --version

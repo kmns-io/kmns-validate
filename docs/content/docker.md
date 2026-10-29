@@ -4,15 +4,34 @@ description = "Running kmns-validate via OCI container images in local developme
 weight = 3
 +++
 
-# Container Usage (Docker)
+# Container Usage (Docker & OCI)
 
-OCI container images are published on release to GitHub Container Registry (`ghcr.io/kmns-io/kmns-validate`) and mirrored to Docker Hub.
+Official multi-architecture OCI container images are published on every release to both **Docker Hub** and **GitHub Container Registry (GHCR)**:
+
+| Registry | Canonical Image Reference | Shorthand Alias |
+| :--- | :--- | :--- |
+| **Docker Hub** | `docker.io/kmnsio/kmns-validate:latest` | `docker.io/kmnsio/validate:latest` |
+| **GitHub Packages (GHCR)** | `ghcr.io/kmns-io/kmns-validate:latest` | — |
 
 ---
 
-## Running in Container
+## Quickstart
 
-Validate host sockets and services from within a container by mounting runtime sockets:
+Validate contracts in the current working directory without installing host binaries:
+
+```bash
+# Via Docker Hub (short alias)
+docker run --rm -v $(pwd):/contracts:ro kmnsio/validate:latest run /contracts/validate.yaml
+
+# Via GitHub Packages (GHCR)
+docker run --rm -v $(pwd):/contracts:ro ghcr.io/kmns-io/kmns-validate:latest run /contracts/validate.yaml
+```
+
+---
+
+## Comprehensive Host Infrastructure Validation
+
+Validate host UNIX sockets, Docker/Podman engines, and systemd services from within a container by mounting runtime sockets:
 
 ```bash
 docker run --rm \
@@ -20,15 +39,14 @@ docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v /run/systemd/system:/run/systemd/system:ro \
   -v $(pwd)/validate.yaml:/etc/kmns/validate.yaml:ro \
-  ghcr.io/kmns-io/kmns-validate:latest run /etc/kmns/validate.yaml
+  kmnsio/validate:latest run /etc/kmns/validate.yaml
 ```
 
 ---
 
-## Image Tags
+## Image Tags & Architectures
 
 | Tag | Target Architecture | Base |
 | :--- | :--- | :--- |
-| `latest` | Multi-arch (`amd64`, `arm64`) | `scratch` static musl (< 15 MB) |
-| `v0.4.0` | Multi-arch (`amd64`, `arm64`) | `scratch` static musl (< 15 MB) |
-| `alpine` | Multi-arch (`amd64`, `arm64`) | Alpine minimal runtime |
+| `latest` | Multi-arch (`linux/amd64`, `linux/arm64`) | `scratch` static musl (< 15 MB) |
+| `0.4.0` | Multi-arch (`linux/amd64`, `linux/arm64`) | `scratch` static musl (< 15 MB) |

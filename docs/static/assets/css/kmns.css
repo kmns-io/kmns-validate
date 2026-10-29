@@ -1,0 +1,499 @@
+/**
+ * KMNS Unified Design System Stylesheet (`kmns.css`)
+ * ===================================================
+ * Single Source of Truth (SSOT) design tokens and components shared across:
+ *   - kmns.io (Astro marketing hub)
+ *   - validate.kmns.io (Zola documentation)
+ *
+ * ARCHITECTURAL NOTES ON MULTI-DOMAIN THEME MIGRATION:
+ * ---------------------------------------------------
+ * PROS of Centralized Multi-Domain Stylesheet:
+ *   1. Visual Parity: Instant, identical branding, dark mode, typography, and contrast across domains.
+ *   2. Direct Origin Evidence: Conditional requests can provide private security evidence at Citadel/HAProxy.
+ *      They are not unique-visitor analytics and are never joined to marketing identities.
+ *   4. Zero Maintenance Duplication: Token updates (colors, borders, fonts) update across all sites at once.
+ *
+ * CONS / RISKS of Centralized Multi-Domain Stylesheet:
+ *   1. CORS / CSP Friction: Subdomains require strict Access-Control-Allow-Origin headers and
+ *      proper style-src directives in Content-Security-Policy (addressed via Citadel HAProxy).
+ *   2. Cross-Subdomain Cache Partitioning: Modern browsers (Chrome/Safari state partitioning)
+ *      isolate HTTP caches by top-level frame site to prevent cross-site tracking. While this applies
+ *      across different third-party domains (e.g. foo.com vs bar.com), same-eTLD+1 subdomains
+ *      (*.kmns.io) can still leverage shared connection pools and edge compression.
+ *   3. Coupled Release Cycles: A breaking CSS class change in a shared file could inadvertently
+ *      affect doc rendering unless class names are strictly scoped and semantic.
+ */
+
+/* -------------------------------------------------------------
+   Self-Hosted Typography (GDPR-Compliant, Zero External CDN Leak)
+   Fonts served directly from /assets/fonts/ on *.kmns.io
+   ------------------------------------------------------------- */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url('/assets/fonts/PlusJakartaSans-Variable.woff2') format('woff2-variations'),
+       url('/assets/fonts/PlusJakartaSans-Variable.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/assets/fonts/JetBrainsMono-Variable.woff2') format('woff2-variations'),
+       url('/assets/fonts/JetBrainsMono-Variable.woff2') format('woff2');
+}
+
+:root {
+  --bg-base: #06090e;
+  --bg-surface: #0c121d;
+  --bg-surface-elevated: #131c2e;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-accent: rgba(56, 189, 248, 0.25);
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-cyan: #38bdf8;
+  --accent-indigo: #818cf8;
+  --accent-emerald: #34d399;
+  --accent-amber: #fbbf24;
+  --accent-rose: #f472b6;
+  --gradient-accent: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
+  --shadow-glow: 0 0 50px -10px rgba(56, 189, 248, 0.2);
+}
+
+/* -------------------------------------------------------------
+   Hero Banner & Showcase Components
+   ------------------------------------------------------------- */
+.hero-banner {
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  background: radial-gradient(circle at 50% 20%, #1e293b 0%, #0f172a 100%);
+  border-radius: 12px;
+  border: 1px solid #334155;
+  margin-bottom: 2.5rem;
+}
+
+.hero-tag {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid #3b82f6;
+  border-radius: 9999px;
+  color: #60a5fa;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  margin-bottom: 1rem;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.hero-title {
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  font-weight: 800;
+  margin-bottom: 1rem;
+  color: #f8fafc;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+.hero-subtitle {
+  font-size: clamp(1rem, 1.8vw, 1.2rem);
+  color: #94a3b8;
+  max-width: 760px;
+  margin: 0 auto 1.5rem auto;
+  line-height: 1.6;
+}
+
+/* -------------------------------------------------------------
+   Feature Grid & Cards
+   ------------------------------------------------------------- */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  max-width: 720px;
+  margin: 0 auto 1.75rem auto;
+  text-align: left;
+}
+
+.feature-card {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.75rem;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.feature-card:hover {
+  border-color: var(--border-accent);
+  transform: translateY(-2px);
+}
+
+.feature-val {
+  font-weight: 700;
+  font-size: 1.05rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.feature-desc {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
+/* -------------------------------------------------------------
+   Action Buttons & Terminal Box
+   ------------------------------------------------------------- */
+.hero-actions {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.btn-primary-doc {
+  background: #3b82f6;
+  color: #ffffff !important;
+  padding: 0.75rem 1.75rem;
+  border-radius: 8px;
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-block;
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.btn-primary-doc:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.45);
+}
+
+.btn-secondary-doc {
+  background: #1e293b;
+  color: #cbd5e1 !important;
+  border: 1px solid #475569;
+  padding: 0.75rem 1.75rem;
+  border-radius: 8px;
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-block;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.btn-secondary-doc:hover {
+  background: #334155;
+  border-color: #64748b;
+}
+
+.hero-install-code {
+  margin-top: 1.5rem;
+}
+
+.hero-install-code code {
+  background: #020617;
+  color: var(--accent-cyan) !important;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  border: 1px solid #1e293b;
+  font-size: 0.95rem;
+  font-family: 'JetBrains Mono', monospace;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* -------------------------------------------------------------
+   Shared Clean Layout & Component Utilities
+   (Used by kmns.io and validate.kmns.io docs)
+   ------------------------------------------------------------- */
+body.kmns-body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.kmns-container {
+  max-width: 1120px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 24px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.kmns-header {
+  padding: 24px 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.brand {
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 20px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.page-content {
+  flex: 1;
+  padding: 48px 0 80px;
+}
+
+.content-card {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: clamp(24px, 5vw, 48px);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  background: var(--bg-surface);
+}
+
+.prose {
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.prose h1,
+.prose h2 {
+  color: var(--text-primary);
+}
+
+.prose a {
+  color: var(--accent-cyan);
+}
+
+.kmns-logo-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: transform 0.2s ease;
+}
+
+.kmns-logo-mark:hover {
+  transform: scale(1.05);
+}
+
+.kmns-nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 14px;
+}
+
+.kmns-nav-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.15s ease;
+}
+
+.kmns-nav-link:hover, .kmns-nav-link.active {
+  color: var(--accent-cyan);
+  font-weight: 700;
+}
+
+.kmns-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(52, 211, 153, 0.1);
+  color: var(--accent-emerald);
+  border: 1px solid rgba(52, 211, 153, 0.25);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.kmns-badge-subtle {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent-cyan);
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.kmns-platform-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 24px;
+  margin-bottom: 48px;
+}
+
+.kmns-platform-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.kmns-platform-card:hover {
+  border-color: var(--border-accent);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px -10px rgba(0, 0, 0, 0.5), var(--shadow-glow);
+}
+
+.kmns-platform-card.highlight {
+  background: linear-gradient(180deg, rgba(19, 28, 46, 0.8) 0%, rgba(12, 18, 29, 0.95) 100%);
+  border-color: rgba(56, 189, 248, 0.4);
+  box-shadow: 0 8px 30px -10px rgba(56, 189, 248, 0.2);
+}
+
+.kmns-card-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.kmns-card-desc {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.65;
+  margin: 14px 0 24px;
+  flex: 1;
+}
+
+.kmns-card-footer {
+  margin-top: auto;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kmns-link-arrow {
+  color: var(--accent-cyan);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: gap 0.2s ease, color 0.2s ease;
+}
+
+.kmns-link-arrow:hover {
+  color: #7dd3fc;
+  gap: 10px;
+}
+
+/* Value Props Comparison Grid */
+.kmns-value-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 40px;
+  margin-top: 60px;
+}
+
+.kmns-value-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 32px;
+  margin-top: 28px;
+}
+
+.kmns-value-item h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.kmns-value-item p {
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+  line-height: 1.65;
+  margin: 0;
+}
+
+.kmns-footer {
+  margin-top: auto;
+  padding: 36px 0 44px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.kmns-footer a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.kmns-footer a:hover {
+  color: var(--accent-cyan);
+}
+
+.kmns-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+@media (max-width: 720px) {
+  .kmns-container {
+    padding: 0 16px;
+  }
+
+  .kmns-header {
+    align-items: flex-start;
+  }
+
+  .kmns-nav {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .hero-install-code code {
+    display: block;
+    overflow-x: auto;
+  }
+
+  .kmns-platform-grid {
+    grid-template-columns: 1fr;
+  }
+}

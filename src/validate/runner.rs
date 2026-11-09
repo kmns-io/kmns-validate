@@ -1,24 +1,14 @@
 use crate::resource::ResourceConfig;
 use crate::validate::http::ResourceTestResult;
 use crate::validate::{
-    addr, command, container, dns, exec, file, group, http, interface, kernel, mount, package,
-    parallel, port, process, service, template, user,
+    addr, certificate, command, container, dns, exec, file, group, http, interface, kernel, mount,
+    package, parallel, port, process, service, template, user,
 };
-use kmns_contract::{Contract, ContractCheck, ContractLimits, NativeResourceKind};
+use kmns_contract::{Contract, ContractCheck, ContractLimits, NativeResourceKind, ResourceCheck};
 use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use thiserror::Error;
-
-/// Failure while projecting a validated typed resource check into the existing native executor.
-#[derive(Debug, Error)]
-pub enum ContractResourceError {
-    #[error("typed contract resource is invalid: {0}")]
-    Contract(#[from] kmns_contract::ContractError),
-    #[error("typed contract resource cannot be represented by the native executor: {0}")]
-    NativeSchema(#[from] serde_yaml::Error),
-}
 
 /// Consistent test outcome counters used in both file and global summaries.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -87,6 +77,8 @@ pub struct RunResult {
     pub tests: Vec<ResourceTestResult>,
     /// Summary for each processed file.
     pub file_summaries: Vec<FileSummary>,
+    /// Contract path or compiler diagnostics that prevent a valid run.
+    pub errors: Vec<String>,
 }
 
 /// Executes one typed native check without parsing a legacy resource-contract file.
@@ -94,59 +86,172 @@ pub struct RunResult {
 /// Callers retain ownership of contract parsing, authorization, scope resolution, and plugin
 /// dispatch. Command and exec behavior remains governed by `opts`.
 pub fn run_contract_resource(
-    check: &kmns_contract::ResourceCheck,
+    check: &ResourceCheck,
     package_manager: &str,
-    base_path: &Path,
-    vars: &HashMap<String, String>,
+    _base_path: &Path,
+    _vars: &HashMap<String, String>,
     opts: &RunOptions,
-) -> Result<(TestCounts, Vec<ResourceTestResult>), ContractResourceError> {
-    let config = resource_config_from_contract(check)?;
-    Ok(run_config(&config, package_manager, base_path, vars, opts))
+) -> (TestCounts, Vec<ResourceTestResult>) {
+    let mut counts = TestCounts::default();
+    let mut results = Vec::with_capacity(1);
+    let result = dispatch_typed_resource(check, package_manager, opts);
+    record_result(&mut counts, &mut results, result);
+    (counts, results)
 }
 
-fn resource_config_from_contract(
-    check: &kmns_contract::ResourceCheck,
-) -> Result<ResourceConfig, ContractResourceError> {
-    let mut fields = Mapping::new();
-    for (name, value) in check.to_legacy_fields()? {
-        fields.insert(Value::String(name), value);
+fn dispatch_typed_resource(
+    check: &ResourceCheck,
+    package_manager: &str,
+    opts: &RunOptions,
+) -> ResourceTestResult {
+    let name = &check.id;
+    let title = Some(check.metadata.name.clone());
+
+    let mut merged = Mapping::new();
+    for (k, v) in &check.resource.fields {
+        merged.insert(Value::String(k.clone()), v.clone());
     }
-    fields.insert(
+    for (k, v) in &check.expect {
+        merged.insert(Value::String(k.clone()), v.clone());
+    }
+    merged.insert(
         Value::String("title".to_string()),
         Value::String(check.metadata.name.clone()),
     );
+    let merged_val = Value::Mapping(merged);
 
-    let mut resources = Mapping::new();
-    let mut entries = Mapping::new();
-    entries.insert(Value::String(check.id.clone()), Value::Mapping(fields));
-    resources.insert(
-        Value::String(native_resource_key(check.resource.kind).to_string()),
-        Value::Mapping(entries),
-    );
-    Ok(serde_yaml::from_value(Value::Mapping(resources))?)
-}
-
-fn native_resource_key(kind: kmns_contract::NativeResourceKind) -> &'static str {
-    use kmns_contract::NativeResourceKind;
-
-    match kind {
-        NativeResourceKind::Addr => "addr",
-        NativeResourceKind::Command => "command",
-        NativeResourceKind::Container => "container",
-        NativeResourceKind::Dns => "dns",
-        NativeResourceKind::Exec => "exec",
-        NativeResourceKind::File => "file",
-        NativeResourceKind::Group => "group",
-        NativeResourceKind::Http => "http",
-        NativeResourceKind::Interface => "interface",
-        NativeResourceKind::Kernel => "kernel",
-        NativeResourceKind::Mount => "mount",
-        NativeResourceKind::Package => "package",
-        NativeResourceKind::Port => "port",
-        NativeResourceKind::Process => "process",
-        NativeResourceKind::Service => "service",
-        NativeResourceKind::User => "user",
-        NativeResourceKind::Host => "host",
+    match check.resource.kind {
+        NativeResourceKind::Certificate => certificate::validate(check),
+        NativeResourceKind::Host => run_host_observation(check),
+        NativeResourceKind::File => {
+            match serde_yaml::from_value::<crate::resource::file::FileResource>(merged_val) {
+                Ok(res) => file::validate(name, &res),
+                Err(e) => execution_error(name, &check.metadata.name, "file", e),
+            }
+        }
+        NativeResourceKind::Http => {
+            match serde_yaml::from_value::<crate::resource::http::HttpResource>(merged_val) {
+                Ok(res) => http::validate(name, &res),
+                Err(e) => execution_error(name, &check.metadata.name, "http", e),
+            }
+        }
+        NativeResourceKind::Port => {
+            match serde_yaml::from_value::<crate::resource::port::PortResource>(merged_val) {
+                Ok(res) => port::validate(name, &res),
+                Err(e) => execution_error(name, &check.metadata.name, "port", e),
+            }
+        }
+        NativeResourceKind::Service => {
+            match serde_yaml::from_value::<crate::resource::service::ServiceResource>(merged_val) {
+                Ok(res) => service::validate(name, &res),
+                Err(e) => execution_error(name, &check.metadata.name, "service", e),
+            }
+        }
+        NativeResourceKind::User => {
+            match serde_yaml::from_value::<crate::resource::user::UserResource>(merged_val) {
+                Ok(res) => user::validate(name, &res),
+                Err(e) => execution_error(name, &check.metadata.name, "user", e),
+            }
+        }
+        NativeResourceKind::Group => {
+            match serde_yaml::from_value::<crate::resource::group::GroupResource>(merged_val) {
+                Ok(res) => group::validate(name, &res),
+                Err(e) => execution_error(name, &check.metadata.name, "group", e),
+            }
+        }
+        NativeResourceKind::Command => {
+            if let Some(message) = opts.unsafe_execution_warning("command") {
+                ResourceTestResult {
+                    name: name.clone(),
+                    title,
+                    resource_type: "command".to_string(),
+                    passed: false,
+                    skipped: false,
+                    failures: vec![message.clone()],
+                    error: None,
+                    warning: Some(message),
+                    observation: None,
+                }
+            } else {
+                match serde_yaml::from_value::<crate::resource::command::CommandResource>(
+                    merged_val,
+                ) {
+                    Ok(res) => command::validate(name, &res, opts.run_as.as_deref()),
+                    Err(e) => execution_error(name, &check.metadata.name, "command", e),
+                }
+            }
+        }
+        NativeResourceKind::Exec => {
+            if let Some(message) = opts.unsafe_execution_warning("exec") {
+                ResourceTestResult {
+                    name: name.clone(),
+                    title,
+                    resource_type: "exec".to_string(),
+                    passed: false,
+                    skipped: false,
+                    failures: vec![message.clone()],
+                    error: None,
+                    warning: Some(message),
+                    observation: None,
+                }
+            } else {
+                match serde_yaml::from_value::<crate::resource::exec::ExecResource>(merged_val) {
+                    Ok(res) => exec::validate(name, &res, opts.run_as.as_deref()),
+                    Err(e) => execution_error(name, &check.metadata.name, "exec", e),
+                }
+            }
+        }
+        NativeResourceKind::Container => {
+            match serde_yaml::from_value::<crate::resource::container::ContainerResource>(
+                merged_val,
+            ) {
+                Ok(res) => container::validate(name, &res, opts.run_as.as_deref()),
+                Err(e) => execution_error(name, &check.metadata.name, "container", e),
+            }
+        }
+        NativeResourceKind::Process => {
+            match serde_yaml::from_value::<crate::resource::process::ProcessResource>(merged_val) {
+                Ok(res) => process::validate(name, &res),
+                Err(e) => execution_error(name, &check.metadata.name, "process", e),
+            }
+        }
+        NativeResourceKind::Package => {
+            match serde_yaml::from_value::<crate::resource::package::PackageResource>(merged_val) {
+                Ok(res) => package::validate(name, &res, package_manager),
+                Err(e) => execution_error(name, &check.metadata.name, "package", e),
+            }
+        }
+        NativeResourceKind::Dns => {
+            match serde_yaml::from_value::<crate::resource::dns::DnsResource>(merged_val) {
+                Ok(res) => dns::validate(name, &res),
+                Err(e) => execution_error(name, &check.metadata.name, "dns", e),
+            }
+        }
+        NativeResourceKind::Addr => {
+            match serde_yaml::from_value::<crate::resource::addr::AddrResource>(merged_val) {
+                Ok(res) => addr::validate(name, &res),
+                Err(e) => execution_error(name, &check.metadata.name, "addr", e),
+            }
+        }
+        NativeResourceKind::Interface => match serde_yaml::from_value::<
+            crate::resource::interface::InterfaceResource,
+        >(merged_val)
+        {
+            Ok(res) => interface::validate(name, &res),
+            Err(e) => execution_error(name, &check.metadata.name, "interface", e),
+        },
+        NativeResourceKind::Mount => {
+            match serde_yaml::from_value::<crate::resource::mount::MountResource>(merged_val) {
+                Ok(res) => mount::validate(name, &res),
+                Err(e) => execution_error(name, &check.metadata.name, "mount", e),
+            }
+        }
+        NativeResourceKind::Kernel => {
+            match serde_yaml::from_value::<crate::resource::kernel::KernelResource>(merged_val) {
+                Ok(res) => kernel::validate(name, &res),
+                Err(e) => execution_error(name, &check.metadata.name, "kernel", e),
+            }
+        }
     }
 }
 
@@ -160,30 +265,70 @@ pub fn run_list(
     let mut result = RunResult {
         tests: Vec::new(),
         file_summaries: Vec::new(),
+        errors: Vec::new(),
     };
 
-    let mut file_paths: Vec<PathBuf> = Vec::new();
-
-    for entry in list {
-        let p = PathBuf::from(entry);
-        if p.is_dir() {
-            let mut dir_files = collect_yaml_files(&p);
-            dir_files.sort();
-            file_paths.extend(dir_files);
-        } else if p.is_file() {
-            file_paths.push(p);
-        } else {
-            eprintln!("validate: path not found or not accessible: {:?}", entry);
-        }
-    }
+    let (file_paths, path_errors) = collect_contract_paths(list);
+    result.errors.extend(path_errors);
 
     for path in file_paths {
         let (summary, tests) = run_file(&path, package_manager, vars, opts);
+        if !summary.valid {
+            result
+                .errors
+                .push(format!("contract could not be compiled: {}", summary.path));
+        }
         result.file_summaries.push(summary);
         result.tests.extend(tests);
     }
 
     result
+}
+
+/// Compile each selected contract without executing resource checks.
+pub fn check_list(list: &[String], vars: &HashMap<String, String>) -> RunResult {
+    let mut result = RunResult {
+        tests: Vec::new(),
+        file_summaries: Vec::new(),
+        errors: Vec::new(),
+    };
+
+    let (file_paths, path_errors) = collect_contract_paths(list);
+    result.errors.extend(path_errors);
+
+    for path in file_paths {
+        let summary = check_file(&path, vars);
+        if !summary.valid {
+            result
+                .errors
+                .push(format!("contract could not be compiled: {}", summary.path));
+        }
+        result.file_summaries.push(summary);
+    }
+
+    result
+}
+
+fn collect_contract_paths(list: &[String]) -> (Vec<PathBuf>, Vec<String>) {
+    let mut file_paths = Vec::new();
+    let mut errors = Vec::new();
+
+    for entry in list {
+        let path = PathBuf::from(entry);
+        if path.is_dir() {
+            let mut dir_files = collect_yaml_files(&path);
+            dir_files.sort();
+            file_paths.extend(dir_files);
+        } else if path.is_file() {
+            file_paths.push(path);
+        } else {
+            let error = format!("contract path not found or not accessible: {entry}");
+            eprintln!("validate: {error}");
+            errors.push(error);
+        }
+    }
+
+    (file_paths, errors)
 }
 
 /// Run validation for a single file.
@@ -200,24 +345,10 @@ pub fn run_file(
     };
     let tests = Vec::new();
 
-    let raw_content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("validate: cannot read {:?}: {}", path, e);
-            return (summary, tests);
-        }
-    };
-
-    // Apply template interpolation
-    let content = template::render(&raw_content, vars);
-
-    let contract = match Contract::parse(content.as_bytes(), &ContractLimits::default()) {
+    let contract = match compile_contract(path, vars) {
         Ok(contract) => contract,
         Err(error) => {
-            eprintln!(
-                "validate: cannot compile typed contract {:?}: {error}",
-                path
-            );
+            eprintln!("validate: {error}");
             return (summary, tests);
         }
     };
@@ -228,15 +359,50 @@ pub fn run_file(
     (summary, results)
 }
 
+fn check_file(path: &Path, vars: &HashMap<String, String>) -> FileSummary {
+    let mut summary = FileSummary {
+        path: path.to_string_lossy().to_string(),
+        valid: false,
+        tests: TestCounts::default(),
+    };
+
+    match compile_contract(path, vars) {
+        Ok(_) => summary.valid = true,
+        Err(error) => eprintln!("validate: {error}"),
+    }
+
+    summary
+}
+
+fn compile_contract(path: &Path, vars: &HashMap<String, String>) -> Result<Contract, String> {
+    let raw_content = match crate::bounded_io::read_file_to_string_bounded(
+        path,
+        crate::bounded_io::MAX_CONTRACT_FILE_BYTES,
+    ) {
+        Ok(content) => content,
+        Err(crate::bounded_io::BoundedReadError::LimitExceeded { .. }) => {
+            return Err(format!(
+                "cannot compile typed contract {:?}: E_CONTRACT_INPUT_LIMIT",
+                path
+            ));
+        }
+        Err(error) => return Err(format!("cannot read {:?}: {error}", path)),
+    };
+    let content = template::render(&raw_content, vars)
+        .map_err(|err| format!("cannot compile typed contract {:?}: {}", path, err.code()))?;
+    Contract::parse(content.as_bytes(), &ContractLimits::default())
+        .map_err(|error| format!("cannot compile typed contract {:?}: {error}", path))
+}
+
 /// Execute a compiled, ordered contract through the local OSS native executors.
 ///
 /// Callers retain ownership of contract parsing, authorization, scope resolution, and plugin
 /// dispatch. Command and exec behavior remains governed by `opts`.
-fn run_typed_contract(
+pub fn run_typed_contract(
     contract: &Contract,
     package_manager: &str,
-    base_path: &Path,
-    vars: &HashMap<String, String>,
+    _base_path: &Path,
+    _vars: &HashMap<String, String>,
     opts: &RunOptions,
 ) -> (TestCounts, Vec<ResourceTestResult>) {
     let mut counts = TestCounts::default();
@@ -255,30 +421,10 @@ fn run_typed_contract(
             }
         }
         match check {
-            ContractCheck::Resource(resource)
-                if resource.resource.kind == NativeResourceKind::Host =>
-            {
-                let result = run_host_observation(resource);
+            ContractCheck::Resource(resource) => {
+                let result = dispatch_typed_resource(resource, package_manager, opts);
                 record_result(&mut counts, &mut results, result);
             }
-            ContractCheck::Resource(resource) => match run_contract_resource(
-                resource,
-                package_manager,
-                base_path,
-                vars,
-                opts,
-            ) {
-                Ok((_, resource_results)) => {
-                    for result in resource_results {
-                        record_result(&mut counts, &mut results, result);
-                    }
-                }
-                Err(error) => record_result(
-                    &mut counts,
-                    &mut results,
-                    execution_error(&resource.id, &resource.metadata.name, "resource", error),
-                ),
-            },
             ContractCheck::Plugin(plugin) => record_result(
                 &mut counts,
                 &mut results,
@@ -669,7 +815,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_resource_projection_uses_the_native_executor_schema() {
+    fn typed_resource_direct_dispatch_executes_native_observer() {
         let contract = kmns_contract::Contract::parse(
             br#"
 schema_version: kmns.io/validate/v1alpha1
@@ -688,9 +834,9 @@ checks:
       severity: high
     resource:
       kind: file
-      path: /etc/kmns/example.yaml
+      path: /nonexistent-path-for-direct-dispatch-test
     expect:
-      exists: true
+      exists: false
 "#,
             &contract_limits(),
         )
@@ -700,11 +846,19 @@ checks:
             _ => unreachable!(),
         };
 
-        let config = resource_config_from_contract(check).unwrap();
-        let resource = config.file.get("CONFIG_FILE").unwrap();
-        assert_eq!(resource.title.as_deref(), Some("Configuration file"));
-        assert_eq!(resource.path.as_deref(), Some("/etc/kmns/example.yaml"));
-        assert!(resource.exists);
+        let (counts, results) = run_contract_resource(
+            check,
+            "apt",
+            Path::new("/tmp"),
+            &HashMap::new(),
+            &RunOptions::default(),
+        );
+        assert_eq!(counts.total, 1);
+        assert_eq!(counts.pass, 1);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "CONFIG_FILE");
+        assert_eq!(results[0].resource_type, "file");
+        assert!(results[0].passed);
     }
 
     #[test]
@@ -733,6 +887,48 @@ checks:
         assert_eq!(collected[0], f1.canonicalize().unwrap_or(f1));
         assert_eq!(collected[1], f2.canonicalize().unwrap_or(f2));
         assert_eq!(collected[2], f3.canonicalize().unwrap_or(f3));
+    }
+
+    #[test]
+    fn run_file_with_malformed_template_fails_before_execution() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let contract_path = temp_dir.path().join("malformed_template.yaml");
+        std::fs::write(
+            &contract_path,
+            r#"
+schema_version: kmns.io/validate/v1alpha1
+id: TEST_CONTRACT
+metadata:
+  name: Test template error
+  description: Verifies fail-closed execution on template failure.
+  version: "0.1.0"
+  language: en
+checks:
+  - id: DUMMY_FILE
+    kind: resource
+    metadata:
+      name: Dummy
+      description: Must not run
+      severity: high
+    resource:
+      kind: file
+      path: /tmp/must-not-be-checked-{{ unclosed_tag
+    expect:
+      exists: true
+"#,
+        )
+        .unwrap();
+
+        let (summary, tests) = run_file(
+            &contract_path,
+            "apt",
+            &HashMap::new(),
+            &RunOptions::default(),
+        );
+
+        assert!(!summary.valid);
+        assert!(tests.is_empty());
+        assert_eq!(summary.tests.total, 0);
     }
 
     #[test]

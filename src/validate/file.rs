@@ -160,7 +160,10 @@ pub fn validate(name: &str, resource: &FileResource) -> ResourceTestResult {
     // ---------- contents ------------------------------------------------
     if !resource.contents.is_empty() {
         if file_type.is_file() {
-            match fs::read_to_string(&path_str) {
+            match crate::bounded_io::read_file_to_string_bounded(
+                &path_str,
+                crate::bounded_io::MAX_FILE_CONTENTS_BYTES,
+            ) {
                 Ok(content) => {
                     for expected in &resource.contents {
                         let res = matcher::validate(&Value::String(content.clone()), expected);
@@ -172,10 +175,16 @@ pub fn validate(name: &str, resource: &FileResource) -> ResourceTestResult {
                         }
                     }
                 }
+                Err(crate::bounded_io::BoundedReadError::LimitExceeded { .. }) => {
+                    result.failures.push(
+                        "contents: E_FILE_CONTENTS_INPUT_LIMIT (file contents exceed 4 MiB limit)"
+                            .to_string(),
+                    );
+                }
                 Err(e) => {
                     result
                         .failures
-                        .push(format!("contents: failed to read file: {}", e));
+                        .push(format!("contents: failed to read file: {e}"));
                 }
             }
         } else {
@@ -185,4 +194,99 @@ pub fn validate(name: &str, resource: &FileResource) -> ResourceTestResult {
 
     result.passed = result.failures.is_empty();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::resource::matcher::MatcherConfig;
+    use std::collections::HashMap;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn json_matcher(pointer: &str, predicate: (&str, MatcherConfig)) -> MatcherConfig {
+        let mut config = HashMap::new();
+        config.insert(
+            "pointer".to_string(),
+            MatcherConfig::String(pointer.to_string()),
+        );
+        config.insert(predicate.0.to_string(), predicate.1);
+        let mut outer = HashMap::new();
+        outer.insert("json".to_string(), MatcherConfig::Matcher(config));
+        MatcherConfig::Matcher(outer)
+    }
+
+    fn file_resource(path: &str, contents: Vec<MatcherConfig>) -> FileResource {
+        FileResource {
+            title: None,
+            path: Some(path.to_string()),
+            meta: None,
+            exists: true,
+            mode: None,
+            owner: None,
+            group: None,
+            filetype: None,
+            linked_to: None,
+            contents,
+            skip: false,
+        }
+    }
+
+    #[test]
+    fn test_file_json_matcher_rejects_payload_larger_than_four_mib() {
+        let mut payload = String::from(r#"{"value":"#);
+        payload.push_str(&"a".repeat(4 * 1024 * 1024));
+        payload.push_str("\"}");
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(payload.as_bytes()).unwrap();
+        let resource = file_resource(
+            file.path().to_str().unwrap(),
+            vec![json_matcher(
+                "/value",
+                ("have-prefix", MatcherConfig::String("a".to_string())),
+            )],
+        );
+
+        let result = validate("oversized-json", &resource);
+        assert!(!result.passed);
+        assert!(result
+            .failures
+            .iter()
+            .any(|failure| failure.contains("4 MiB")));
+    }
+
+    #[test]
+    fn test_file_plain_string_matcher_rejects_payload_larger_than_four_mib() {
+        // TEST-044-4: 4 MiB + 1 byte plain string
+        let payload = vec![b'A'; crate::bounded_io::MAX_FILE_CONTENTS_BYTES + 1];
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&payload).unwrap();
+        let resource = file_resource(
+            file.path().to_str().unwrap(),
+            vec![MatcherConfig::String("AAA".to_string())],
+        );
+
+        let result = validate("oversized-plain", &resource);
+        assert!(!result.passed);
+        assert!(result
+            .failures
+            .iter()
+            .any(|failure| failure.contains("E_FILE_CONTENTS_INPUT_LIMIT")));
+    }
+
+    #[test]
+    fn test_file_plain_string_matcher_accepts_exactly_four_mib() {
+        // TEST-044-5: Exactly 4 MiB plain string
+        let payload = vec![b'A'; crate::bounded_io::MAX_FILE_CONTENTS_BYTES];
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&payload).unwrap();
+        let resource = file_resource(
+            file.path().to_str().unwrap(),
+            vec![MatcherConfig::String("AAA".to_string())],
+        );
+
+        let result = validate("exact-4mib", &resource);
+        assert!(result.passed, "Failures: {:?}", result.failures);
+    }
 }

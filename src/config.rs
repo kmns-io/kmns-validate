@@ -1,8 +1,6 @@
 use crate::runtime::Runtime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read;
 use std::path::PathBuf;
 
 pub const DEFAULT_CONFIG_DIR_PRIVILEGED: &str = "/etc/kmns";
@@ -156,9 +154,16 @@ impl Config {
 
     /// Updates the current configuration by parsing a YAML file from the given path.
     fn update_from_file(&mut self, path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-        let mut file = File::open(&path)?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
+        let content = match crate::bounded_io::read_file_to_string_bounded(
+            &path,
+            crate::bounded_io::MAX_CONFIG_FILE_BYTES,
+        ) {
+            Ok(c) => c,
+            Err(crate::bounded_io::BoundedReadError::LimitExceeded { .. }) => {
+                return Err("E_CONFIG_INPUT_LIMIT".into());
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         let raw: RawConfig = serde_yaml::from_str(&content)?;
 

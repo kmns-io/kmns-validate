@@ -50,11 +50,15 @@ pub fn upgrade_message() -> Option<String> {
     let cache_path = version_cache_path()?;
 
     if cache_is_fresh(&cache_path) {
-        if let Ok(cached) = fs::read(&cache_path) {
+        if let Ok(cached) = crate::bounded_io::read_file_bounded(
+            &cache_path,
+            crate::bounded_io::MAX_VERSION_CACHE_BYTES,
+        ) {
             if let Some(manifest) = parse_manifest(&cached) {
                 return manifest_message_from(&manifest);
             }
         }
+        return None;
     }
 
     let response = fetch_manifest().ok()?;
@@ -182,7 +186,7 @@ mod tests {
           "schema_version": "kmns.io/version/v1alpha1",
           "applications": {
             "kmns-validate": {
-              "latest": "0.4.1",
+              "latest": "0.5.2",
               "message": "Upgrade now\nplease\u001b[2J"
             }
           }

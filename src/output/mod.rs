@@ -46,6 +46,9 @@ pub struct TestEntry {
     /// Non-empty only when status is `Error`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Non-empty only when status is `Warning`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// A bounded value observed by a non-asserting check.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observation: Option<String>,
@@ -150,7 +153,7 @@ impl OutputResult {
             warn: self
                 .tests
                 .iter()
-                .filter(|t| t.status == TestStatus::Warning)
+                .filter(|t| t.warning.is_some() || t.status == TestStatus::Warning)
                 .count(),
         };
 
@@ -163,10 +166,10 @@ pub fn resource_result_to_entry(r: crate::validate::http::ResourceTestResult) ->
         TestStatus::Skip
     } else if r.error.is_some() {
         TestStatus::Error
-    } else if r.warning.is_some() {
-        TestStatus::Warning
     } else if r.passed {
         TestStatus::Pass
+    } else if r.warning.is_some() {
+        TestStatus::Warning
     } else {
         TestStatus::Fail
     };
@@ -178,6 +181,7 @@ pub fn resource_result_to_entry(r: crate::validate::http::ResourceTestResult) ->
         status,
         failures: r.failures,
         error: r.error,
+        warning: r.warning,
         observation: r.observation,
     }
 }
@@ -216,6 +220,7 @@ mod tests {
             status: TestStatus::Warning,
             failures: Vec::new(),
             error: None,
+            warning: None,
             observation: None,
         });
         output.file_summaries.push(FileSummary {
@@ -229,5 +234,32 @@ mod tests {
         });
 
         assert_eq!(output.test_summary().warn, 1);
+    }
+
+    #[test]
+    fn passed_test_with_warning_is_counted_in_both_pass_and_warn() {
+        let entry = resource_result_to_entry(crate::validate::http::ResourceTestResult {
+            name: "CERT".to_owned(),
+            title: Some("Certificate".to_owned()),
+            resource_type: "certificate".to_owned(),
+            passed: true,
+            skipped: false,
+            failures: Vec::new(),
+            error: None,
+            warning: Some("W_PRIVATE_KEY_IN_BUNDLE".to_owned()),
+            observation: None,
+        });
+
+        assert_eq!(entry.status, TestStatus::Pass);
+        assert_eq!(entry.warning.as_deref(), Some("W_PRIVATE_KEY_IN_BUNDLE"));
+
+        let mut output = OutputResult::new();
+        output.add_test(entry);
+        let summary = output.test_summary();
+        assert_eq!(summary.total, 1);
+        assert_eq!(summary.pass, 1);
+        assert_eq!(summary.warn, 1);
+        assert_eq!(summary.fail, 0);
+        assert_eq!(summary.error, 0);
     }
 }

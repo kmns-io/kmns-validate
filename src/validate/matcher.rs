@@ -75,6 +75,7 @@ pub fn validate(actual: &Value, config: &MatcherConfig) -> MatchResult {
 
             let (match_type, value_config) = map.iter().next().unwrap();
             match match_type.as_str() {
+                "json" => validate_json(actual, value_config),
                 "equal" => validate(actual, value_config),
                 "have-prefix" => {
                     let prefix = get_string(value_config);
@@ -221,54 +222,6 @@ pub fn validate(actual: &Value, config: &MatcherConfig) -> MatchResult {
                         )),
                     }
                 }
-                "gjson" => {
-                    if let MatcherConfig::Matcher(sub_map) = value_config {
-                        // If actual is a string, try to parse it as JSON first
-                        let parsed_json: Value = if let Value::String(s) = actual {
-                            match serde_json::from_str(s) {
-                                Ok(json) => json,
-                                Err(e) => {
-                                    return MatchResult::fail(format!(
-                                        "gjson: failed to parse as JSON: {}",
-                                        e
-                                    ))
-                                }
-                            }
-                        } else {
-                            actual.clone()
-                        };
-
-                        for (path, sub_config) in sub_map {
-                            // Simple GJSON support (dot path)
-                            let parts: Vec<&str> = path.split('.').collect();
-                            let mut current = &parsed_json;
-                            for part in parts {
-                                if let Some(next) = current.get(part) {
-                                    current = next;
-                                } else {
-                                    return MatchResult::fail(format!(
-                                        "gjson: path \"{}\" not found",
-                                        path
-                                    ));
-                                }
-                            }
-                            let res = validate(current, sub_config);
-                            if !res.passed {
-                                return MatchResult::fail(format!(
-                                    "gjson path \"{}\" failed: {}",
-                                    path,
-                                    res.failure_message.unwrap_or_default()
-                                ));
-                            }
-                        }
-                        MatchResult::pass()
-                    } else {
-                        MatchResult::fail(
-                            "gjson matcher expects a map of path: matcher".to_string(),
-                        )
-                    }
-                }
-
                 _ => MatchResult::fail(format!("Syntax Error: Unknown matcher \"{}\"", match_type)),
             }
         }
@@ -341,4 +294,291 @@ fn validate_contain_elements(actual: &Value, sub_matchers: &[MatcherConfig]) -> 
         }
     }
     MatchResult::pass()
+}
+
+fn validate_json(actual: &Value, json_config: &MatcherConfig) -> MatchResult {
+    let parsed_val: Value = match actual {
+        Value::String(raw) => match serde_json::from_str(raw) {
+            Ok(value) => value,
+            Err(json_error) => match serde_yaml::from_str(raw) {
+                Ok(value) => value,
+                Err(yaml_error) => {
+                    return MatchResult::fail(format!(
+                        "JSON parse error: {}; YAML parse error: {}",
+                        json_error, yaml_error
+                    ))
+                }
+            },
+        },
+        value => value.clone(),
+    };
+
+    match json_config {
+        MatcherConfig::Matcher(map) => {
+            let pointer_str = match map.get("pointer") {
+                Some(MatcherConfig::String(p)) => p.as_str(),
+                _ => {
+                    return MatchResult::fail(
+                        "Syntax Error: 'json' matcher requires 'pointer' string".to_string(),
+                    )
+                }
+            };
+
+            let predicates: Vec<(&String, &MatcherConfig)> = map
+                .iter()
+                .filter(|(key, _)| key.as_str() != "pointer")
+                .collect();
+            if predicates.len() != 1 {
+                return MatchResult::fail(format!(
+                    "Syntax Error: 'json' matcher requires exactly one predicate, found {}",
+                    predicates.len()
+                ));
+            }
+
+            let target_val = match parsed_val.pointer(pointer_str) {
+                Some(v) => v,
+                None => {
+                    return MatchResult::fail(format!(
+                        "pointer '{}' not found in JSON payload",
+                        pointer_str
+                    ))
+                }
+            };
+
+            let (predicate_name, predicate_config) = predicates[0];
+            let predicate = MatcherConfig::Matcher(std::collections::HashMap::from([(
+                predicate_name.clone(),
+                predicate_config.clone(),
+            )]));
+            validate(target_val, &predicate)
+        }
+        _ => MatchResult::fail(
+            "Syntax Error: 'json' matcher must be a map with 'pointer'".to_string(),
+        ),
+    }
+}
+
+/// Returns whether a matcher requires structured JSON/YAML payload parsing.
+pub fn contains_json_matcher(config: &MatcherConfig) -> bool {
+    match config {
+        MatcherConfig::List(matchers) => matchers.iter().any(contains_json_matcher),
+        MatcherConfig::Matcher(map) => {
+            map.contains_key("json") || map.values().any(contains_json_matcher)
+        }
+        MatcherConfig::String(_) | MatcherConfig::Number(_) | MatcherConfig::Boolean(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_json_sub_matcher_string_equality() {
+        let json_text = r#"{"name": "kmns-validate", "version": "0.4.0"}"#;
+        let mut inner = HashMap::new();
+        inner.insert(
+            "pointer".to_string(),
+            MatcherConfig::String("/version".to_string()),
+        );
+        inner.insert(
+            "equal".to_string(),
+            MatcherConfig::String("0.4.0".to_string()),
+        );
+
+        let mut outer = HashMap::new();
+        outer.insert("json".to_string(), MatcherConfig::Matcher(inner));
+        let matcher = MatcherConfig::Matcher(outer);
+
+        let res = validate(&Value::String(json_text.to_string()), &matcher);
+        assert!(
+            res.passed,
+            "Expected match to pass, got: {:?}",
+            res.failure_message
+        );
+    }
+
+    #[test]
+    fn test_json_sub_matcher_have_prefix() {
+        let json_text =
+            r#"{"channels": {"production": {"apps": {"kompass": {"version": "2026.10.4"}}}}}"#;
+        let mut inner = HashMap::new();
+        inner.insert(
+            "pointer".to_string(),
+            MatcherConfig::String("/channels/production/apps/kompass/version".to_string()),
+        );
+        inner.insert(
+            "have-prefix".to_string(),
+            MatcherConfig::String("2026.".to_string()),
+        );
+
+        let mut outer = HashMap::new();
+        outer.insert("json".to_string(), MatcherConfig::Matcher(inner));
+        let matcher = MatcherConfig::Matcher(outer);
+
+        let res = validate(&Value::String(json_text.to_string()), &matcher);
+        assert!(
+            res.passed,
+            "Expected prefix match to pass, got: {:?}",
+            res.failure_message
+        );
+    }
+
+    #[test]
+    fn test_json_sub_matcher_number_and_boolean() {
+        let json_text = r#"{"active": true, "port": 443}"#;
+        let mut inner_bool = HashMap::new();
+        inner_bool.insert(
+            "pointer".to_string(),
+            MatcherConfig::String("/active".to_string()),
+        );
+        inner_bool.insert("equal".to_string(), MatcherConfig::Boolean(true));
+
+        let mut outer_bool = HashMap::new();
+        outer_bool.insert("json".to_string(), MatcherConfig::Matcher(inner_bool));
+        let res_bool = validate(
+            &Value::String(json_text.to_string()),
+            &MatcherConfig::Matcher(outer_bool),
+        );
+        assert!(res_bool.passed);
+
+        let mut inner_num = HashMap::new();
+        inner_num.insert(
+            "pointer".to_string(),
+            MatcherConfig::String("/port".to_string()),
+        );
+        inner_num.insert("equal".to_string(), MatcherConfig::Number(443.0));
+
+        let mut outer_num = HashMap::new();
+        outer_num.insert("json".to_string(), MatcherConfig::Matcher(inner_num));
+        let res_num = validate(
+            &Value::String(json_text.to_string()),
+            &MatcherConfig::Matcher(outer_num),
+        );
+        assert!(res_num.passed);
+    }
+
+    #[test]
+    fn test_json_sub_matcher_missing_pointer() {
+        let json_text = r#"{"name": "test"}"#;
+        let mut inner = HashMap::new();
+        inner.insert(
+            "pointer".to_string(),
+            MatcherConfig::String("/missing".to_string()),
+        );
+        inner.insert(
+            "equal".to_string(),
+            MatcherConfig::String("foo".to_string()),
+        );
+
+        let mut outer = HashMap::new();
+        outer.insert("json".to_string(), MatcherConfig::Matcher(inner));
+        let res = validate(
+            &Value::String(json_text.to_string()),
+            &MatcherConfig::Matcher(outer),
+        );
+        assert!(!res.passed);
+        assert!(res
+            .failure_message
+            .unwrap()
+            .contains("pointer '/missing' not found"));
+    }
+
+    #[test]
+    fn test_json_sub_matcher_yaml_auto_detection() {
+        let yaml_text = "channels:\n  production:\n    version: '0.4.0'\n";
+        let mut inner = HashMap::new();
+        inner.insert(
+            "pointer".to_string(),
+            MatcherConfig::String("/channels/production/version".to_string()),
+        );
+        inner.insert(
+            "equal".to_string(),
+            MatcherConfig::String("0.4.0".to_string()),
+        );
+
+        let mut outer = HashMap::new();
+        outer.insert("json".to_string(), MatcherConfig::Matcher(inner));
+        let res = validate(
+            &Value::String(yaml_text.to_string()),
+            &MatcherConfig::Matcher(outer),
+        );
+        assert!(
+            res.passed,
+            "Expected YAML auto-detection to pass: {:?}",
+            res.failure_message
+        );
+    }
+
+    #[test]
+    fn test_json_sub_matcher_requires_exactly_one_predicate() {
+        let mut pointer_only = HashMap::new();
+        pointer_only.insert(
+            "pointer".to_string(),
+            MatcherConfig::String("/version".to_string()),
+        );
+        let mut outer = HashMap::new();
+        outer.insert("json".to_string(), MatcherConfig::Matcher(pointer_only));
+
+        let res = validate(
+            &Value::String(r#"{"version":"0.4.0"}"#.to_string()),
+            &MatcherConfig::Matcher(outer),
+        );
+        assert!(!res.passed);
+        assert!(res
+            .failure_message
+            .unwrap()
+            .contains("exactly one predicate"));
+
+        let mut multiple_predicates = HashMap::new();
+        multiple_predicates.insert(
+            "pointer".to_string(),
+            MatcherConfig::String("/version".to_string()),
+        );
+        multiple_predicates.insert(
+            "equal".to_string(),
+            MatcherConfig::String("0.4.0".to_string()),
+        );
+        multiple_predicates.insert(
+            "have-prefix".to_string(),
+            MatcherConfig::String("0.".to_string()),
+        );
+        let mut outer = HashMap::new();
+        outer.insert(
+            "json".to_string(),
+            MatcherConfig::Matcher(multiple_predicates),
+        );
+
+        let res = validate(
+            &Value::String(r#"{"version":"0.4.0"}"#.to_string()),
+            &MatcherConfig::Matcher(outer),
+        );
+        assert!(!res.passed);
+        assert!(res
+            .failure_message
+            .unwrap()
+            .contains("exactly one predicate"));
+    }
+
+    #[test]
+    fn test_gjson_matcher_is_rejected() {
+        let mut paths = HashMap::new();
+        paths.insert(
+            "status".to_string(),
+            MatcherConfig::String("ok".to_string()),
+        );
+        let mut outer = HashMap::new();
+        outer.insert("gjson".to_string(), MatcherConfig::Matcher(paths));
+
+        let res = validate(
+            &Value::String(r#"{"status":"ok"}"#.to_string()),
+            &MatcherConfig::Matcher(outer),
+        );
+        assert!(!res.passed);
+        assert!(res
+            .failure_message
+            .unwrap()
+            .contains("Unknown matcher \"gjson\""));
+    }
 }

@@ -1,11 +1,9 @@
 use crate::resource::exec::ExecResource;
 use crate::validate::http::ResourceTestResult;
 use crate::validate::matcher;
+use crate::validate::subprocess::{self, SubprocessConfig};
 use serde_json::Value;
-use std::io::Read;
-use std::os::unix::process::CommandExt;
-use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Validate an ExecResource (typed argv invocation without shell).
 pub fn validate(name: &str, resource: &ExecResource, run_as: Option<&str>) -> ResourceTestResult {
@@ -48,57 +46,6 @@ pub fn validate(name: &str, resource: &ExecResource, run_as: Option<&str>) -> Re
         return result;
     }
 
-    let current_uid = nix::unistd::geteuid();
-    let is_root = current_uid.is_root();
-
-    let mut cmd = if let Some(target_user) = run_as {
-        let trimmed = target_user.trim();
-        let valid_user = !trimmed.is_empty()
-            && trimmed != "root"
-            && trimmed
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-
-        if !valid_user {
-            result.passed = false;
-            result.error = Some(format!(
-                "Security violation: invalid or prohibited run_as user '{}' (root privilege escalation or invalid characters forbidden)",
-                target_user
-            ));
-            return result;
-        }
-
-        let need_switch = if let Ok(Some(u)) = nix::unistd::User::from_name(trimmed) {
-            u.uid != current_uid
-        } else {
-            is_root
-        };
-
-        if need_switch {
-            let mut c = Command::new("sudo");
-            c.arg("-u")
-                .arg(trimmed)
-                .arg("--")
-                .arg(&bin_path)
-                .args(&resource.args);
-            crate::validate::sanitize_cmd_env(&mut c, Some(trimmed));
-            c
-        } else {
-            let mut c = Command::new(&bin_path);
-            c.args(&resource.args);
-            crate::validate::sanitize_cmd_env(&mut c, None);
-            c
-        }
-    } else {
-        let mut c = Command::new(&bin_path);
-        c.args(&resource.args);
-        crate::validate::sanitize_cmd_env(&mut c, None);
-        c
-    };
-
-    // Isolate process in its own process group
-    cmd.process_group(0);
-
     let timeout_duration = Duration::from_millis(
         resource
             .timeout
@@ -106,98 +53,31 @@ pub fn validate(name: &str, resource: &ExecResource, run_as: Option<&str>) -> Re
             .unwrap_or(15000),
     );
 
-    let mut child = match cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
+    let config = SubprocessConfig::new(&bin_path, &resource.args)
+        .with_timeout(timeout_duration)
+        .with_run_as(run_as);
+
+    let output = match subprocess::execute(&config) {
+        Ok(out) => out,
         Err(e) => {
-            result.error = Some(format!("failed to spawn executable {:?}: {}", bin_path, e));
+            result.error = Some(e.to_string());
             return result;
         }
     };
 
-    let child_pid = child.id() as i32;
-    let start = Instant::now();
-
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if start.elapsed() > timeout_duration {
-                    let _ = nix::sys::signal::kill(
-                        nix::unistd::Pid::from_raw(-child_pid),
-                        nix::sys::signal::Signal::SIGKILL,
-                    );
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    result.error = Some(format!(
-                        "exec execution timed out after {:?}: {:?}",
-                        timeout_duration, bin_path
-                    ));
-                    return result;
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            Err(e) => {
-                let _ = nix::sys::signal::kill(
-                    nix::unistd::Pid::from_raw(-child_pid),
-                    nix::sys::signal::Signal::SIGKILL,
-                );
-                let _ = child.kill();
-                result.error = Some(format!("error waiting for exec {:?}: {}", bin_path, e));
-                return result;
-            }
-        }
-    };
-
-    const MAX_OUTPUT_BYTES: usize = 16 * 1024; // 16 KiB bounded output
-
-    let mut stdout_bytes = Vec::new();
-    if let Some(stdout) = child.stdout.take() {
-        let mut reader = stdout.take((MAX_OUTPUT_BYTES + 1) as u64);
-        let _ = reader.read_to_end(&mut stdout_bytes);
-    }
-    let mut stderr_bytes = Vec::new();
-    if let Some(stderr) = child.stderr.take() {
-        let mut reader = stderr.take((MAX_OUTPUT_BYTES + 1) as u64);
-        let _ = reader.read_to_end(&mut stderr_bytes);
-    }
-
-    let exit_status = status.code().unwrap_or(-1);
-
     if resource
         .exit_status
-        .is_some_and(|expected| exit_status != expected)
+        .is_some_and(|expected| output.exit_status != expected)
     {
         result.failures.push(format!(
             "exit-status: expected {} got {}",
             resource.exit_status.unwrap(),
-            exit_status
+            output.exit_status
         ));
     }
 
-    let stdout_str = if stdout_bytes.len() > MAX_OUTPUT_BYTES {
-        stdout_bytes.truncate(MAX_OUTPUT_BYTES);
-        let mut s = String::from_utf8_lossy(&stdout_bytes).trim().to_string();
-        s.push_str("\n[TRUNCATED: Output exceeded limit]");
-        s
-    } else {
-        String::from_utf8_lossy(&stdout_bytes).trim().to_string()
-    };
-
-    let stderr_str = if stderr_bytes.len() > MAX_OUTPUT_BYTES {
-        stderr_bytes.truncate(MAX_OUTPUT_BYTES);
-        let mut s = String::from_utf8_lossy(&stderr_bytes).trim().to_string();
-        s.push_str("\n[TRUNCATED: Output exceeded limit]");
-        s
-    } else {
-        String::from_utf8_lossy(&stderr_bytes).trim().to_string()
-    };
-
     for expected in &resource.stdout {
-        let res = matcher::validate(&Value::String(stdout_str.clone()), expected);
+        let res = matcher::validate(&Value::String(output.stdout.clone()), expected);
         if !res.passed {
             result.failures.push(format!(
                 "stdout: {}",
@@ -207,7 +87,7 @@ pub fn validate(name: &str, resource: &ExecResource, run_as: Option<&str>) -> Re
     }
 
     for expected in &resource.stderr {
-        let res = matcher::validate(&Value::String(stderr_str.clone()), expected);
+        let res = matcher::validate(&Value::String(output.stderr.clone()), expected);
         if !res.passed {
             result.failures.push(format!(
                 "stderr: {}",

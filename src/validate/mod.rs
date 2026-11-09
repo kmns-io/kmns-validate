@@ -1,4 +1,5 @@
 pub mod addr;
+pub mod certificate;
 pub mod command;
 pub mod container;
 pub mod dns;
@@ -6,6 +7,7 @@ pub mod exec;
 pub mod file;
 pub mod group;
 pub mod http;
+pub mod inline;
 pub mod interface;
 pub mod kernel;
 pub mod matcher;
@@ -16,6 +18,7 @@ pub mod port;
 pub mod process;
 pub mod runner;
 pub mod service;
+pub mod subprocess;
 pub mod template;
 pub mod user;
 

@@ -1,10 +1,33 @@
-use minijinja::{context, Environment};
+use minijinja::{context, Environment, ErrorKind};
 use std::collections::HashMap;
+use thiserror::Error;
+
+/// Structured template processing error.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum TemplateError {
+    #[error("E_TEMPLATE_PARSE")]
+    Parse,
+
+    #[error("E_TEMPLATE_RENDER")]
+    Render,
+}
+
+impl TemplateError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            TemplateError::Parse => "E_TEMPLATE_PARSE",
+            TemplateError::Render => "E_TEMPLATE_RENDER",
+        }
+    }
+}
 
 /// Renders a template content using the provided environment and configuration variables.
 /// Supports Goss-compatible '{{ .Env.VAR }}' and '{{ .Vars.VAR }}' syntax by pre-processing
 /// the content to match standard Jinja patterns.
-pub fn render(content: &str, vars: &HashMap<String, String>) -> String {
+///
+/// In case of syntax or evaluation failure, returns a sanitized `TemplateError` without
+/// logging to stderr or returning unrendered fallback content.
+pub fn render(content: &str, vars: &HashMap<String, String>) -> Result<String, TemplateError> {
     let env = Environment::new();
 
     // Pre-process goss-style '{{ .Env.' and '{{ .Vars.' to '{{ Env.' and '{{ Vars.'
@@ -33,14 +56,11 @@ pub fn render(content: &str, vars: &HashMap<String, String>) -> String {
         Vars => vars,
     };
 
-    match env.render_str(&pre_processed, ctx) {
-        Ok(rendered) => rendered,
-        Err(e) => {
-            eprintln!("validate: template rendering error: {}", e);
-            // Return original content if rendering fails to avoid data loss on partial parsing
-            content.to_string()
-        }
-    }
+    env.render_str(&pre_processed, ctx)
+        .map_err(|e| match e.kind() {
+            ErrorKind::SyntaxError => TemplateError::Parse,
+            _ => TemplateError::Render,
+        })
 }
 
 #[cfg(test)]
@@ -53,9 +73,28 @@ mod tests {
         std::env::set_var("KMNS_ALLOWED_VAR", "visible-value");
 
         let template = "secret={{ Env.SECRET_API_KEY }} allowed={{ Env.KMNS_ALLOWED_VAR }}";
-        let rendered = render(template, &HashMap::new());
+        let rendered = render(template, &HashMap::new()).unwrap();
 
         assert!(!rendered.contains("super-secret-token"));
         assert!(rendered.contains("visible-value"));
+    }
+
+    #[test]
+    fn test_render_parse_error_sanitized() {
+        let malformed = "value={{ unclosed_tag";
+        let err = render(malformed, &HashMap::new()).unwrap_err();
+        assert_eq!(err, TemplateError::Parse);
+        assert_eq!(err.code(), "E_TEMPLATE_PARSE");
+        assert_eq!(err.to_string(), "E_TEMPLATE_PARSE");
+    }
+
+    #[test]
+    fn test_render_evaluation_error_sanitized() {
+        // Calling an undefined or invalid function triggers a render error
+        let invalid_eval = "value={{ non_existent_function() }}";
+        let err = render(invalid_eval, &HashMap::new()).unwrap_err();
+        assert_eq!(err, TemplateError::Render);
+        assert_eq!(err.code(), "E_TEMPLATE_RENDER");
+        assert_eq!(err.to_string(), "E_TEMPLATE_RENDER");
     }
 }

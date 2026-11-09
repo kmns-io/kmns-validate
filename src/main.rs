@@ -74,7 +74,18 @@ fn main() {
         }
     };
 
-    if !explicit_contracts.is_empty() {
+    // Check for inline mode or stdin streaming
+    let is_stdin_positional = explicit_contracts.len() == 1 && explicit_contracts[0] == "-";
+    let is_inline = args.inline.is_some() || is_stdin_positional;
+
+    if args.inline.is_some() && !explicit_contracts.is_empty() && !is_stdin_positional {
+        eprintln!("error: --inline cannot be combined with contract path arguments or flags.");
+        std::process::exit(2);
+    }
+
+    if is_inline {
+        config.validate.list.clear();
+    } else if !explicit_contracts.is_empty() {
         config.validate.list = explicit_contracts;
     }
 
@@ -97,8 +108,135 @@ fn main() {
         }
     }
 
-    // `check` mode: verify contract syntax/schema only, do not run live probes
-    if is_check_mode {
+    if is_inline {
+        use kmns_validate::validate::inline::{
+            check_inline, read_stdin_bounded, run_inline, InlineError, MAX_INLINE_CONFIG_BYTES,
+        };
+
+        let (raw_content, source_name) = match &args.inline {
+            Some(spec) if spec == "-" => match read_stdin_bounded(MAX_INLINE_CONFIG_BYTES) {
+                Ok(content) => (content, "<stdin>".to_string()),
+                Err(InlineError::PayloadTooLarge) => {
+                    eprintln!(
+                        "PayloadTooLarge: inline validation contract exceeds maximum allowed size of 64KB (65536 bytes)."
+                    );
+                    std::process::exit(2);
+                }
+                Err(e) => {
+                    eprintln!("Error reading stdin: {}", e);
+                    std::process::exit(2);
+                }
+            },
+            Some(spec) => {
+                if spec.len() > MAX_INLINE_CONFIG_BYTES {
+                    eprintln!(
+                        "PayloadTooLarge: inline validation contract exceeds maximum allowed size of 64KB (65536 bytes)."
+                    );
+                    std::process::exit(2);
+                }
+                (spec.clone(), "<inline>".to_string())
+            }
+            None if is_stdin_positional => match read_stdin_bounded(MAX_INLINE_CONFIG_BYTES) {
+                Ok(content) => (content, "<stdin>".to_string()),
+                Err(InlineError::PayloadTooLarge) => {
+                    eprintln!(
+                        "PayloadTooLarge: inline validation contract exceeds maximum allowed size of 64KB (65536 bytes)."
+                    );
+                    std::process::exit(2);
+                }
+                Err(e) => {
+                    eprintln!("Error reading stdin: {}", e);
+                    std::process::exit(2);
+                }
+            },
+            _ => unreachable!(),
+        };
+
+        if args.verbose {
+            output_result.add_verbose(format!("Inline source: {}", source_name));
+            output_result.add_verbose(format!("Payload bytes: {}", raw_content.len()));
+        }
+
+        let vars = config.flatten_variables();
+        if is_check_mode {
+            match check_inline(&raw_content, &source_name, &vars) {
+                Ok(summary) => {
+                    output_result.file_summaries.push(summary);
+                    output_result.add_success(format!(
+                        "Validation contract {:?} is syntactically valid.",
+                        source_name
+                    ));
+                }
+                Err(InlineError::SecurityViolation) => {
+                    eprintln!(
+                        "SecurityViolation: 'command' and 'exec' observers are strictly prohibited when contract is provided via inline argument or stdin."
+                    );
+                    std::process::exit(2);
+                }
+                Err(InlineError::PayloadTooLarge) => {
+                    eprintln!(
+                        "PayloadTooLarge: inline validation contract exceeds maximum allowed size of 64KB (65536 bytes)."
+                    );
+                    std::process::exit(2);
+                }
+                Err(e) => {
+                    output_result.add_error("contract".to_string(), e.to_string());
+                }
+            }
+        } else {
+            let parallel_enabled = args.parallel || config.parallel.enabled;
+            let max_threads = if args.max_threads > 0 {
+                args.max_threads
+            } else {
+                config.parallel.max_threads
+            };
+            let opts = kmns_validate::validate::runner::RunOptions {
+                parallel: parallel_enabled,
+                max_threads,
+                run_as: None,
+                allow_unsafe_command: false,
+                allow_unsafe_exec: false,
+                allow_root_execution: false,
+                tags: args.tag.clone(),
+            };
+
+            match run_inline(
+                &raw_content,
+                &source_name,
+                &config.runtime.package_manager,
+                &vars,
+                &opts,
+            ) {
+                Ok((summary, results)) => {
+                    output_result.file_summaries.push(summary);
+                    for r in results {
+                        output_result.add_test(resource_result_to_entry(r));
+                    }
+                }
+                Err(InlineError::SecurityViolation) => {
+                    eprintln!(
+                        "SecurityViolation: 'command' and 'exec' observers are strictly prohibited when contract is provided via inline argument or stdin."
+                    );
+                    std::process::exit(2);
+                }
+                Err(InlineError::PayloadTooLarge) => {
+                    eprintln!(
+                        "PayloadTooLarge: inline validation contract exceeds maximum allowed size of 64KB (65536 bytes)."
+                    );
+                    std::process::exit(2);
+                }
+                Err(e) => {
+                    output_result.add_error("contract".to_string(), e.to_string());
+                }
+            }
+        }
+    } else if is_check_mode {
+        let vars = config.flatten_variables();
+        let check = kmns_validate::validate::runner::check_list(&config.validate.list, &vars);
+        output_result.file_summaries = check.file_summaries;
+        for error in check.errors {
+            output_result.add_error("contract".to_string(), error);
+        }
         if !output_result.has_errors() {
             output_result.add_success(format!(
                 "Validation contracts and configuration {:?} are syntactically valid.",
@@ -184,6 +322,9 @@ fn main() {
                 &opts,
             );
             output_result.file_summaries = run.file_summaries;
+            for error in run.errors {
+                output_result.add_error("contract".to_string(), error);
+            }
             for r in run.tests {
                 output_result.add_test(resource_result_to_entry(r));
             }

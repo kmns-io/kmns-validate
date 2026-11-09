@@ -14,8 +14,8 @@ highlight_code = true
 render_emoji = true
 
 [extra]
-version = "0.4.0"
-image_tag = "v0.4.0"
+version = "0.5.1"
+image_tag = "v0.5.1"
 image_repo = "ghcr.io/kmns-io/kmns-validate"
 hub_url = "https://kmns.io"
 schema_url = "https://kmns.io/validate/v1alpha1"

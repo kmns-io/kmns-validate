@@ -46,7 +46,7 @@ pub fn format_json(result: &OutputResult) -> String {
         || result
             .tests
             .iter()
-            .any(|test| test.status == TestStatus::Warning)
+            .any(|test| test.status == TestStatus::Warning || test.warning.is_some())
     {
         "warning"
     } else {
@@ -70,9 +70,12 @@ pub fn format_json(result: &OutputResult) -> String {
         result
             .tests
             .iter()
-            .filter(|t| t.status == TestStatus::Warning)
+            .filter(|t| t.status == TestStatus::Warning || t.warning.is_some())
             .map(|t| WarningEntry {
-                warning_type: "test_warning".to_string(),
+                warning_type: t
+                    .warning
+                    .clone()
+                    .unwrap_or_else(|| "test_warning".to_string()),
                 message: format!("{}/{}", t.resource_type, t.name),
             }),
     );

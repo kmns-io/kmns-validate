@@ -192,6 +192,12 @@ pub fn validate(name: &str, resource: &HttpResource) -> ResourceTestResult {
     // ---------- body ----------------------------------------------------
     let body_text = String::from_utf8_lossy(&body_buf).to_string();
     for expected in &resource.body {
+        if matcher::contains_json_matcher(expected) {
+            result.failures.push(
+                "body: the json matcher is currently supported only by file.contents".to_string(),
+            );
+            continue;
+        }
         let res = matcher::validate(&Value::String(body_text.clone()), expected);
         if !res.passed {
             result

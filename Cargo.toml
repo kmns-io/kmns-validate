@@ -1,12 +1,14 @@
 [package]
 name = "kmns-validate"
-version = "0.4.0"
+version = "0.5.1"
 edition = "2021"
 authors = ["KMNS Authors <team@kmns.io>"]
 license = "Apache-2.0"
 description = "Lightning-fast, zero-dependency infrastructure testing and validation tool"
 repository = "https://github.com/kmns-io/kmns-validate"
 documentation = "https://validate.kmns.io"
+
+[workspace]
 
 [[bin]]
 name = "kmns-validate"
@@ -18,7 +20,7 @@ parallel = ["dep:rayon"]
 
 [dependencies]
 # https://github.com/clap-rs/clap/blob/master/CHANGELOG.md
-clap = { version = "~4.5", features = ["derive", "env"] }
+clap = { version = "4", features = ["derive", "env"] }
 nix = { version = "0.31.2", features = ["user", "net", "hostname", "resource", "process", "signal"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
@@ -33,13 +35,18 @@ semver = "1.0.25"
 rayon = { version = "1", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 shellexpand = "3.1.0"
-dirs = "5.0"
-kmns-contract = "0.2.0"
-thiserror = "1.0"
+dirs = "6.0"
+kmns-contract = "0.3.0"
+thiserror = "2.0"
 sha2 = "0.10"
+x509-parser = "0.18.1"
+webpki = { package = "rustls-webpki", version = "0.103.15", default-features = false, features = ["std", "ring"] }
+webpki-roots = "1.0.9"
+rustls-pki-types = "1.15.1"
 
 [dev-dependencies]
 tempfile = "3.16"
+rcgen = { version = "0.14.10", features = ["pem"] }
 
 [lints.rust]
 unsafe_code = "forbid"

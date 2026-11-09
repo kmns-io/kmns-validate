@@ -1,0 +1,13 @@
+schema_version: kmns.io/validate/v1alpha1
+id: invalid-contract
+metadata:
+  name: Invalid Contract
+  description: Invalid schema fixture for compiler error testing
+  version: "0.1.0"
+  language: en
+checks:
+  - id: INVALID_CHECK
+    kind: unknown_kind
+    resource:
+      kind: unknown_resource
+

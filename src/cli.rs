@@ -42,6 +42,11 @@ pub struct Cli {
     #[arg(long = "contract", action = clap::ArgAction::Append, global = true)]
     pub contract: Option<Vec<String>>,
 
+    /// Ad-hoc inline validation contract (JSON or YAML string, max 64KB).
+    /// Pass '-' to read from standard input. Strictly forbids 'command' and 'exec' observers.
+    #[arg(long = "inline", value_name = "SPEC", global = true)]
+    pub inline: Option<String>,
+
     /// Enable parallel execution for network check resources.
     #[arg(long, default_value_t = false, global = true)]
     pub parallel: bool,
@@ -144,5 +149,22 @@ mod tests {
     fn default_positional_contracts_parse() {
         let cli = Cli::try_parse_from(["validate", "contract.yaml"]).unwrap();
         assert_eq!(cli.contracts, vec!["contract.yaml"]);
+    }
+
+    #[test]
+    fn inline_contract_flag_parses_string_and_stdin_dash() {
+        let cli = Cli::try_parse_from([
+            "validate",
+            "--inline",
+            "{\"schema_version\":\"kmns.io/validate/v1alpha1\"}",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.inline.as_deref(),
+            Some("{\"schema_version\":\"kmns.io/validate/v1alpha1\"}")
+        );
+
+        let cli_stdin = Cli::try_parse_from(["validate", "run", "--inline", "-"]).unwrap();
+        assert_eq!(cli_stdin.inline.as_deref(), Some("-"));
     }
 }

@@ -4,6 +4,7 @@
 //!
 //! The `kmns-validate` binary provides a thin, high-performance command-line interface around this engine.
 
+pub(crate) mod bounded_io;
 pub mod cli;
 pub mod config;
 pub mod host;

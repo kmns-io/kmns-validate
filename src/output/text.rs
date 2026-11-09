@@ -36,6 +36,9 @@ pub fn format_text(result: &OutputResult) -> String {
                     "[PASS] {}/{}{}\n",
                     test.resource_type, test.name, label
                 ));
+                if let Some(warn) = &test.warning {
+                    output.push_str(&format!("       ! warning: {warn}\n"));
+                }
                 if let Some(observation) = &test.observation {
                     output.push_str(&format!("       = {observation}\n"));
                 }
@@ -56,9 +59,14 @@ pub fn format_text(result: &OutputResult) -> String {
                 }
             }
             TestStatus::Warning => {
+                let warn_msg = test
+                    .warning
+                    .as_deref()
+                    .map(|w| format!(": {}", w))
+                    .unwrap_or_default();
                 output.push_str(&format!(
-                    "[WARN] {}/{}{}\n",
-                    test.resource_type, test.name, label
+                    "[WARN] {}/{}{}{}\n",
+                    test.resource_type, test.name, label, warn_msg
                 ));
                 for f in &test.failures {
                     output.push_str(&format!("       - {}\n", f));
